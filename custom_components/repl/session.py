@@ -21,6 +21,27 @@ _DISABLED_MATCHERS = [
     "IPCompleter.custom_completer_matcher",
 ]
 
+_INSPECTABLE_NODES = frozenset(
+    {
+        ast.Expression,
+        ast.Name,
+        ast.Load,
+        ast.Attribute,
+        ast.Subscript,
+        ast.Constant,
+        ast.Slice,
+        ast.Tuple,
+        ast.List,
+        ast.UnaryOp,
+        ast.USub,
+        ast.UAdd,
+    }
+)
+
+
+def _truncate(text: str, limit: int = 2000) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
 
 @dataclass(slots=True)
 class Completion:
@@ -66,7 +87,6 @@ class ReplSession:
                 compiled = compile(module, _FILENAME, "exec", flags=_COMPILE_FLAGS)
                 result = eval(compiled, self.namespace)
                 if inspect.iscoroutine(result):
-                    # if compiled.co_flags & inspect.CO_COROUTINE:
                     await result
             if result_expr is not None:
                 compiled = compile(result_expr, _FILENAME, "eval", flags=_COMPILE_FLAGS)
@@ -113,3 +133,44 @@ class ReplSession:
             Completion(c.text, c.start, c.end, c.type or "", c.signature or "")
             for c in raw
         ]
+
+    def inspect(self, expr: str) -> dict | None:
+        expr = expr.strip()
+        if not expr:
+            return None
+        try:
+            tree = ast.parse(expr, "<inspect>", "eval")
+        except SyntaxError:
+            return None
+        if any(type(node) not in _INSPECTABLE_NODES for node in ast.walk(tree)):
+            return None
+        try:
+            value = eval(compile(tree, "<inspect>", "eval"), self.namespace)
+        except BaseException:  # noqa: BLE001
+            return None
+        return self._describe(value)
+
+    @staticmethod
+    def _describe(value: object) -> dict:
+        type_ = type(value)
+        module = type_.__module__
+        info: dict = {
+            "type": type_.__name__
+            if module == "builtins"
+            else f"{module}.{type_.__name__}",
+            "repr": _truncate(ReplSession._repr(value) or repr(value)),
+        }
+        try:
+            info["length"] = len(value)  # ty: ignore[invalid-argument-type]
+        except TypeError:
+            pass
+        if callable(value):
+            try:
+                info["signature"] = str(inspect.signature(value))
+            except TypeError, ValueError:
+                pass
+        if inspect.isclass(value) or inspect.ismodule(value) or callable(value):
+            doc = inspect.getdoc(value)
+            if doc:
+                info["doc"] = _truncate(doc.strip(), 500)
+        return info

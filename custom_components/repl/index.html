@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Home Assistant REPL</title>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "@codemirror/state": "https://esm.sh/@codemirror/state@6",
+        "@codemirror/view": "https://esm.sh/*@codemirror/view@6",
+        "@codemirror/language": "https://esm.sh/*@codemirror/language@6",
+        "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6",
+        "@codemirror/search": "https://esm.sh/*@codemirror/search@6",
+        "@codemirror/autocomplete": "https://esm.sh/*@codemirror/autocomplete@6",
+        "@codemirror/lint": "https://esm.sh/*@codemirror/lint@6",
+        "@codemirror/lang-python": "https://esm.sh/*@codemirror/lang-python@6",
+        "@lezer/common": "https://esm.sh/@lezer/common@1",
+        "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1",
+        "@lezer/lr": "https://esm.sh/*@lezer/lr@1",
+        "@lezer/python": "https://esm.sh/*@lezer/python@1",
+        "style-mod": "https://esm.sh/style-mod@4",
+        "w3c-keyname": "https://esm.sh/w3c-keyname@2",
+        "crelt": "https://esm.sh/crelt@1"
+      }
+    }
+    </script>
+
+    <style>
+    :root {
+      color-scheme: light dark;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #fafafa;
+      color: #1a1a1a;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .55rem 1rem;
+      font-weight: 600;
+      background: #fafafaee;
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(128,128,128,.2);
+    }
+    .status {
+      margin-left: auto;
+      font-weight: 400;
+      font-size: .82rem;
+      opacity: .75;
+    }
+    .status::before {
+      content: "●";
+      margin-right: .35rem;
+      color: #999;
+    }
+    .status.on::before {
+      color: #35c759;
+    }
+    .status.off::before {
+      color: #ff3b30;
+    }
+    main {
+      max-width: 940px;
+      margin: 1.4rem auto;
+      padding: 0 1rem;
+    }
+    .cell {
+      display: grid;
+      grid-template-columns: 3.4rem 1fr;
+      margin-bottom: .75rem;
+      border-radius: 9px;
+      overflow: hidden;
+      border: 1px solid rgba(128,128,128,.22);
+      background: #fff;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .cell:focus-within {
+      border-color: #4a90d9;
+      box-shadow: 0 0 0 3px rgba(74,144,217,.14);
+    }
+    .gutter {
+      padding: .25rem .45rem 0 0;
+      text-align: right;
+      font: .78rem ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #7c8;
+      color: #4a90d9;
+      opacity: .8;
+      user-select: none;
+    }
+    .gutter.busy {
+      color: #e0902f;
+    }
+    .editor {
+      min-width: 0;
+    }
+    .output {
+      grid-column: 2;
+      border-top: 1px solid rgba(128,128,128,.14);
+    }
+    .output:empty {
+      display: none;
+    }
+    .output pre {
+      margin: 0;
+      padding: .5rem .7rem;
+      font: .82rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .output .stderr,
+    .output .error {
+      color: #d9534f;
+    }
+    .output .result {
+      border-top: 1px dashed rgba(128,128,128,.16);
+    }
+    .add {
+      display: block;
+      width: 100%;
+      padding: .5rem;
+      margin-top: .2rem;
+      border: 1px dashed rgba(128,128,128,.3);
+      border-radius: 8px;
+      background: none;
+      color: inherit;
+      opacity: .6;
+      cursor: pointer;
+      font-size: .85rem;
+    }
+    .add:hover {
+      opacity: 1;
+      border-color: #4a90d9;
+    }
+
+    .cm-editor {
+      font-size: .86rem;
+    }
+    .cm-editor.cm-focused {
+      outline: none;
+    }
+    .cm-gutters {
+      display: none;
+    }
+    .cm-content {
+      padding: .45rem 0;
+    }
+    .cm-line {
+      padding: 0 .7rem;
+    }
+
+    .inspect {
+      font: .8rem ui-monospace, SFMono-Regular, Menlo, monospace;
+      max-width: 400px;
+      padding: .35rem .5rem;
+    }
+    .inspect .t {
+      color: #4a90d9;
+      font-weight: 600;
+    }
+    .inspect .meta {
+      opacity: .7;
+    }
+    .inspect .repr {
+      display: block;
+      margin-top: .25rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .inspect .doc {
+      display: block;
+      margin-top: .35rem;
+      opacity: .72;
+      white-space: pre-wrap;
+    }
+
+    .cm-tooltip {
+      background: #ffffff !important;
+      color: #1a1a1a !important;
+      border: 1px solid rgba(128, 128, 128, .3) !important;
+      border-radius: 7px;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, .16);
+    }
+    .cm-tooltip-autocomplete ul li[aria-selected] {
+      background: #4a90d9 !important;
+      color: #fff !important;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #16181d;
+        color: #e7e7ea;
+      }
+      header {
+        background: #16181dcc;
+      }
+      .cell {
+        background: #1e2128;
+      }
+      .output .result {
+        border-top-color: rgba(128,128,128,.22);
+      }
+      .cm-tooltip {
+        background: #262a33 !important;
+        color: #e7e7ea !important;
+        border-color: rgba(255, 255, 255, .14) !important;
+      }
+    }
+    </style>
+  </head>
+  <body>
+    <header>
+  Home Assistant REPL
+  <span class="status" id="status">connecting…</span>
+    </header>
+    <main id="notebook"></main>
+
+    <script type="module">
+    let EditorState, Prec;
+    let EditorView, keymap, hoverTooltip, drawSelection;
+    let history, historyKeymap, defaultKeymap, indentWithTab;
+    let syntaxHighlighting,
+      defaultHighlightStyle,
+      bracketMatching,
+      indentOnInput,
+      syntaxTree;
+    let autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap;
+    let python;
+    try {
+      const [state, view, cmds, lang, ac, langpy] = await Promise.all([
+        import("@codemirror/state"),
+        import("@codemirror/view"),
+        import("@codemirror/commands"),
+        import("@codemirror/language"),
+        import("@codemirror/autocomplete"),
+        import("@codemirror/lang-python"),
+      ]);
+      ({ EditorState, Prec } = state);
+      ({ EditorView, keymap, hoverTooltip, drawSelection } = view);
+      ({ history, historyKeymap, defaultKeymap, indentWithTab } = cmds);
+      ({
+        syntaxHighlighting,
+        defaultHighlightStyle,
+        bracketMatching,
+        indentOnInput,
+        syntaxTree,
+      } = lang);
+      ({ autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } =
+        ac);
+      ({ python } = langpy);
+    } catch (err) {
+      document.getElementById("notebook").textContent =
+        "Failed to load the editor libraries from the CDN: " + err;
+      throw err;
+    }
+
+    const el = (tag, cls) => {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      return node;
+    };
+
+    class Kernel {
+      constructor() {
+        this.ws = null;
+        this.nextId = 1;
+        this.pending = new Map();
+        this.onstatus = () => {};
+      }
+
+      static hassToken() {
+        const raw = localStorage.getItem("hassTokens");
+        if (!raw) return {};
+        try {
+          return JSON.parse(raw) || {};
+        } catch {
+          return {};
+        }
+      }
+
+      connect() {
+        const { access_token: token, hassUrl } = Kernel.hassToken();
+        if (!token) {
+          return Promise.reject(
+            new Error(
+              "No Home Assistant session in this browser — open Home Assistant, then reload.",
+            ),
+          );
+        }
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        this.ws = new WebSocket(`${hassUrl}/api/repl/ws`);
+        return new Promise((resolve, reject) => {
+          this.ws.onopen = () =>
+            this.ws.send(JSON.stringify({ type: "auth", access_token: token }));
+          this.ws.onmessage = (ev) => {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === "auth_ok") {
+              this.onstatus(true);
+              resolve();
+              return;
+            }
+            if (msg.type === "auth_invalid") {
+              reject(
+                new Error(
+                  "Authentication failed — session expired? Reload Home Assistant.",
+                ),
+              );
+              return;
+            }
+            if (msg.type === "output") {
+              const p = this.pending.get(msg.id);
+              if (p && p.onOutput) p.onOutput(msg);
+              return;
+            }
+            const p = this.pending.get(msg.id);
+            if (p) {
+              this.pending.delete(msg.id);
+              p.resolve(msg);
+            }
+          };
+          this.ws.onclose = () => {
+            this.onstatus(false);
+            this._failAll();
+          };
+          this.ws.onerror = () => reject(new Error("Connection error."));
+        });
+      }
+
+      _request(payload, onOutput) {
+        const id = this.nextId++;
+        return new Promise((resolve) => {
+          this.pending.set(id, { resolve, onOutput });
+          this.ws.send(JSON.stringify({ ...payload, id }));
+        });
+      }
+      _failAll() {
+        for (const p of this.pending.values()) {
+          p.resolve({ error: "[disconnected]" });
+        }
+        this.pending.clear();
+      }
+
+      run(code, onOutput) {
+        return this._request({ type: "execute", code }, onOutput);
+      }
+      complete(code, cursor_pos) {
+        return this._request({ type: "complete", code, cursor_pos });
+      }
+      inspect(expr) {
+        return this._request({ type: "inspect", expr }).then((r) => r.info);
+      }
+    }
+
+    const CM_TYPE = {
+      function: "function",
+      method: "method",
+      class: "class",
+      module: "namespace",
+      instance: "variable",
+      keyword: "keyword",
+    };
+
+    function completionSource(kernel) {
+      return async (context) => {
+        const code = context.state.doc.toString();
+        const res = await kernel.complete(code, context.pos);
+        const matches = res.matches || [];
+        if (!matches.length) return null;
+        return {
+          from: matches[0].start,
+          validFor: /^[\w.]*$/,
+          options: matches.map((m) => ({
+            label: m.text,
+            type: CM_TYPE[m.type] || "variable",
+            detail: m.signature || undefined,
+          })),
+        };
+      };
+    }
+
+    const NAME_NODES = new Set(["VariableName", "PropertyName"]);
+
+    function exprAt(state, pos) {
+      const tree = syntaxTree(state);
+      let node = tree.resolveInner(pos, -1);
+      if (!NAME_NODES.has(node.name)) node = tree.resolveInner(pos, 1);
+      if (!NAME_NODES.has(node.name)) return null;
+      while (
+        node.parent &&
+        node.parent.name === "MemberExpression" &&
+        node.parent.to === node.to
+      ) {
+        node = node.parent;
+      }
+      return {
+        expr: state.doc.sliceString(node.from, node.to),
+        from: node.from,
+        to: node.to,
+      };
+    }
+
+    function renderInspect(info) {
+      const dom = el("div", "inspect");
+      const head = el("span", "t");
+      head.textContent = info.type + (info.signature || "");
+      dom.append(head);
+      if (info.length != null) {
+        const meta = el("span", "meta");
+        meta.textContent = `  · len ${info.length}`;
+        dom.append(meta);
+      }
+      if (info.repr) {
+        const r = el("span", "repr");
+        r.textContent = info.repr;
+        dom.append(r);
+      }
+      if (info.doc) {
+        const d = el("span", "doc");
+        d.textContent = info.doc;
+        dom.append(d);
+      }
+      return dom;
+    }
+
+    function inspectHover(kernel) {
+      return hoverTooltip(async (view, pos) => {
+        const found = exprAt(view.state, pos);
+        if (!found) return null;
+        const info = await kernel.inspect(found.expr);
+        if (!info) return null;
+        return {
+          pos: found.from,
+          end: found.to,
+          above: true,
+          create: () => ({ dom: renderInspect(info) }),
+        };
+      });
+    }
+
+    function makeEditor(host, cell, kernel, notebook) {
+      const runKeys = keymap.of([
+        {
+          key: "Shift-Enter",
+          run: () => {
+            notebook.run(cell, true);
+            return true;
+          },
+        },
+        {
+          key: "Mod-Enter",
+          run: () => {
+            notebook.run(cell, false);
+            return true;
+          },
+        },
+      ]);
+      const state = EditorState.create({
+        extensions: [
+          Prec.highest(runKeys),
+          history(),
+          drawSelection(),
+          indentOnInput(),
+          bracketMatching(),
+          closeBrackets(),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          python(),
+          autocompletion({ override: [completionSource(kernel)] }),
+          inspectHover(kernel),
+          keymap.of([
+            ...closeBracketsKeymap,
+            ...defaultKeymap,
+            ...historyKeymap,
+            ...completionKeymap,
+            indentWithTab,
+          ]),
+          EditorView.lineWrapping,
+        ],
+      });
+      return new EditorView({ state, parent: host });
+    }
+
+    class Cell {
+      constructor(notebook) {
+        this.notebook = notebook;
+        this.dom = el("div", "cell");
+        this.gutter = el("div", "gutter");
+        this.gutter.textContent = "[ ]";
+        const host = el("div", "editor");
+        this.output = el("div", "output");
+        this.dom.append(this.gutter, host, this.output);
+        this.view = makeEditor(host, this, notebook.kernel, notebook);
+        this._stream = null;
+      }
+      get code() {
+        return this.view.state.doc.toString();
+      }
+      focus() {
+        this.view.focus();
+      }
+
+      markRunning() {
+        this.gutter.textContent = "[*]";
+        this.gutter.classList.add("busy");
+        this.output.replaceChildren();
+        this._stream = null;
+      }
+      appendOutput(stream, text) {
+        if (!this._stream) {
+          this._stream = el("pre", "stream");
+          this.output.append(this._stream);
+        }
+        const span = el("span", stream);
+        span.textContent = text;
+        this._stream.append(span);
+      }
+      finish(count, result) {
+        this.gutter.textContent = `[${count}]`;
+        this.gutter.classList.remove("busy");
+        if (result.error) {
+          const pre = el("pre", "error");
+          pre.textContent = result.error;
+          this.output.append(pre);
+        } else if (result.repr != null) {
+          const pre = el("pre", "result");
+          pre.textContent = result.repr;
+          this.output.append(pre);
+        }
+      }
+    }
+
+    class Notebook {
+      constructor(root, kernel) {
+        this.root = root;
+        this.kernel = kernel;
+        this.cells = [];
+        this.count = 0;
+        this.addButton = el("button", "add");
+        this.addButton.textContent = "+ cell";
+        this.addButton.onclick = () => this.addCell().focus();
+        root.append(this.addButton);
+      }
+
+      addCell() {
+        const cell = new Cell(this);
+        this.cells.push(cell);
+        this.root.insertBefore(cell.dom, this.addButton);
+        return cell;
+      }
+
+      async run(cell, advance) {
+        if (cell.code.trim()) {
+          cell.markRunning();
+          const result = await this.kernel.run(
+            cell.code,
+            (o) => cell.appendOutput(o.stream, o.text),
+          );
+          cell.finish(++this.count, result);
+        }
+        if (advance) {
+          const next = this.cells[this.cells.indexOf(cell) + 1] || this.addCell();
+          next.focus();
+        }
+      }
+    }
+
+    const status = document.getElementById("status");
+    const kernel = new Kernel();
+    kernel.onstatus = (up) => {
+      status.textContent = up ? "connected" : "disconnected";
+      status.className = "status " + (up ? "on" : "off");
+    };
+    try {
+      await kernel.connect();
+      const notebook = new Notebook(document.getElementById("notebook"), kernel);
+      notebook.addCell().focus();
+    } catch (err) {
+      status.textContent = "offline";
+      status.className = "status off";
+      const note = el("p");
+      note.style.color = "#d9534f";
+      note.textContent = err.message;
+      document.getElementById("notebook").prepend(note);
+    }
+    </script>
+  </body>
+</html>

@@ -121,19 +121,23 @@ def make_key_bindings() -> KeyBindings:
 
 async def run(url: str, token: str, insecure: bool) -> None:
     ws_url = build_ws_url(url)
-    headers = {"Authorization": f"Bearer {token}"}
 
     async with aiohttp.ClientSession() as session:
         try:
             ws = await session.ws_connect(
-                ws_url, headers=headers, verify_ssl=not insecure, max_msg_size=0
+                ws_url, verify_ssl=not insecure, max_msg_size=0
             )
-        except aiohttp.ClientResponseError as err:
-            sys.exit(f"Failed to connect ({err.status}): check URL and token")
         except aiohttp.ClientError as err:
             sys.exit(f"Failed to connect: {err}")
 
         async with ws:
+            await ws.send_json({"type": "auth", "access_token": token})
+            try:
+                reply = await ws.receive_json()
+            except TypeError, ValueError:
+                sys.exit("Authentication failed: unexpected server response")
+            if reply.get("type") != "auth_ok":
+                sys.exit("Authentication failed: check your token")
             conn = ReplConnection(ws)
             reader_task = asyncio.ensure_future(conn.reader())
             prompt = PromptSession(
