@@ -1,0 +1,13 @@
+{
+  "domain": "repl",
+  "name": "REPL",
+  "codeowners": ["@devsnek"],
+  "config_flow": false,
+  "dependencies": [],
+  "documentation": "https://github.com/devsnek/hass-repl",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/devsnek/hass-repl/issues",
+  "requirements": ["ipython>=8.18.0"],
+  "version": "0.1.0"
+}
